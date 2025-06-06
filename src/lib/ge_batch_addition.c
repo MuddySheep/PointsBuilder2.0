@@ -34,7 +34,13 @@ limitations under the License.
 #include <omp.h>
 
 #include "ge_utils.h"
+#include "numa_utils.h"                 // NUMA-aware thread placement
+#include "simd.h"                        // SIMD capability detection
 #include "../common_def.h"
+
+#include <assert.h>
+
+static_assert(sizeof(secp256k1_fe_storage) == 32, "unexpected fe_storage size");
 
 #define GE_CONST_ON_HEAP    (NUM_CONST_POINTS > 16384)
 
@@ -95,6 +101,9 @@ void batch_addition(
     }
 
     // up-sweep inversion tree [SIMD friendly]
+#if PB_SIMD_ENABLED
+#pragma omp simd
+#endif
     for (i = 0; i < batch_size - 1; i++) {
         FE_MUL(xz[batch_size + i], xz[i * 2], xz[i * 2 + 1]);
     }
@@ -102,6 +111,9 @@ void batch_addition(
     FE_INV(xzOut[batch_size * 2 - 2], xz[2 * batch_size - 2]);
 
     // down-sweep inversion tree
+#if PB_SIMD_ENABLED
+#pragma omp simd
+#endif
     for (i = (S64) batch_size - 2; i >= 0; i--) {
         FE_MUL(xzOut[i * 2], xz[i * 2 + 1], xzOut[batch_size + i]);
         FE_MUL(xzOut[i * 2 + 1], xz[i * 2], xzOut[batch_size + i]);
@@ -339,6 +351,9 @@ int compute_results(
     double ompStartTime = omp_get_wtime();
     double ompProgressTime = ompStartTime;
 
+#define MAX_THREADS 1024
+    static double thr_time[MAX_THREADS];
+
     for (U64 launchIdx = 0; launchIdx < numLaunches; launchIdx++) {
         // Generate results step (allows parallelization)
 #pragma omp parallel for \
@@ -346,6 +361,8 @@ num_threads(numThreads) \
 default(none) \
 shared(numThreads, numResPerLaunch, numLoopsPerLaunch, xOut, resultsSize, yParityOut, ge_pivot, ge_const, p_trees, treeSize)
         for (U16 tId = 0; tId < numThreads; tId++) {
+            pb_bind_thread(tId);            // bind to NUMA node
+            double tStart = omp_get_wtime();
             const size_t resOffset = tId * numResPerLaunch
                 + NUM_CONST_POINTS - 1;
 
@@ -365,6 +382,14 @@ shared(numThreads, numResPerLaunch, numLoopsPerLaunch, xOut, resultsSize, yParit
 
                 x += resultsSize;
                 yParity += resultsSize;
+            }
+            thr_time[tId] = omp_get_wtime() - tStart;
+        }
+
+        if (launchIdx == 0) {
+            for (U16 t = 0; t < numThreads; t++) {
+                double th = (double)numLoopsPerLaunch / (thr_time[t] ? thr_time[t] : 1.0);
+                printf("Thread %u throughput: %.0f loops/s\n", t, th);
             }
         }
 
