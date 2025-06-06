@@ -30,4 +30,9 @@ void db_insert_result(
     U8 yParity
 );
 
+int db_lookup_scalar(
+    const U8 * x,
+    U64 * scalar
+);
+
 #endif // POINTS_BUILDER_DB_H

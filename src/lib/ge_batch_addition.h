@@ -20,6 +20,7 @@ limitations under the License.
 #include <secp256k1.h>
 
 #include "../common_def.h"
+#include "../../inc/points_builder.h"     // scalar_filter_t
 
 #define NUM_CONST_POINTS    512
 
@@ -37,7 +38,8 @@ int batch_add_range(
     mpz_srcptr baseKey,
     const secp256k1_ge * base_ge,
     on_result_cb callback,
-    U32 progressMinInterval
+    U32 progressMinInterval,
+    const scalar_filter_t * filter
 );
 
 #endif // POINTS_BUILDER_GE_BATCH_ADD_H

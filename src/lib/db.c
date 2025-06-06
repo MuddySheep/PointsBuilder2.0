@@ -19,6 +19,8 @@ limitations under the License.
 
 #include "../common_def.h"
 
+static_assert(sizeof(sqlite3_int64) == sizeof(U64), "unexpected sqlite3 size");
+
 #define CHECK_RESULT(code, res, TAG) do {   \
     if ((code) != (res)) {                  \
         printf("[%d] [%d] " TAG ": %s\n",   \
@@ -41,9 +43,12 @@ limitations under the License.
 
 #define SQL_INSERT \
 "INSERT OR IGNORE INTO pts (x, k) VALUES (?, ?)"
+#define SQL_LOOKUP \
+"SELECT k FROM pts WHERE x = ?"
 
 static sqlite3 * g_db = NULL;
 static sqlite3_stmt * g_stmt_insert = NULL;
+static sqlite3_stmt * g_stmt_lookup = NULL;
 
 int db_open(
     const char * dbName
@@ -68,6 +73,12 @@ int db_open(
 
     CHECK_OK(err, "prepare");
 
+    err = sqlite3_prepare_v2(
+        g_db, SQL_LOOKUP, -1, &g_stmt_lookup, NULL
+    );
+
+    CHECK_OK(err, "prep_lookup");
+
     // prepare for a large write
     // sqlite3_exec(db, "PRAGMA journal_mode=WAL;", 0, 0, 0);
     // sqlite3_exec(db, "PRAGMA synchronous=NORMAL;", 0, 0, 0);
@@ -91,6 +102,7 @@ int db_close() {
         sqlite3_exec(g_db, "COMMIT", NULL, NULL, NULL);
 
         FINALIZE_STMT(g_stmt_insert);
+        FINALIZE_STMT(g_stmt_lookup);
 
         result = sqlite3_close_v2(g_db);
         CHECK_OK(result, "close");
@@ -124,4 +136,26 @@ int db_insert_result(
     sqlite3_clear_bindings(stmt);
 
     return 0;
+}
+
+int db_lookup_scalar(
+    const U8 * x,
+    U64 * scalar
+) {
+    sqlite3_stmt * stmt = g_stmt_lookup;
+    int err = sqlite3_bind_blob(stmt, 1, x, 32, SQLITE_TRANSIENT);
+    CHECK_OK(err, "bind lookup");
+
+    err = sqlite3_step(stmt);
+    if (SQLITE_ROW == err) {
+        *scalar = (U64) sqlite3_column_int64(stmt, 0);
+        err = sqlite3_reset(stmt);
+        CHECK_OK(err, "reset lookup");
+        sqlite3_clear_bindings(stmt);
+        return 0;
+    }
+
+    sqlite3_reset(stmt);
+    sqlite3_clear_bindings(stmt);
+    return -1;
 }
