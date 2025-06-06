@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <gmp.h>
 #include <sqlite3.h>
+#include <math.h>
 
 // Disable "unused function" warnings in 3rd-party includes
 #pragma GCC diagnostic push
@@ -37,6 +38,7 @@ limitations under the License.
 #include "numa_utils.h"                 // NUMA-aware thread placement
 #include "simd.h"                        // SIMD capability detection
 #include "../common_def.h"
+#include "../../inc/points_builder.h"     // scalar_filter_t definition
 
 #include <assert.h>
 
@@ -49,6 +51,29 @@ static_assert(sizeof(secp256k1_fe_storage) == 32, "unexpected fe_storage size");
 #define FE_SQR(r, x)        secp256k1_fe_sqr_inner((r).n, (x).n)
 #define FE_ADD(r, d)        secp256k1_fe_impl_add(&(r), &(d))
 #define FE_NEG(r, a, m)     secp256k1_fe_impl_negate_unchecked(&(r), &(a), (m))
+
+static int is_prime(U64 v) {
+    if (v < 2) return 0;                    // why: 0 and 1 are not prime
+    for (U64 i = 2; i * i <= v; ++i) {
+        if (v % i == 0) return 0;           // why: divisible -> not prime
+    }
+    return 1;
+}
+
+static int is_triangular(U64 v) {
+    // why: solve n(n+1)/2 = v -> n^2+n-2v=0
+    double n = (-1.0 + sqrt(1.0 + 8.0 * (double)v)) * 0.5;
+    U64 i = (U64)(n + 0.5);                // round
+    return i * (i + 1) / 2 == v;
+}
+
+static int filter_match(const scalar_filter_t *f, U64 v) {
+    if (!f) return 1;
+    if (f->prime_only && !is_prime(v)) return 0;
+    if (f->triangular_only && !is_triangular(v)) return 0;
+    if (f->use_modulo && (v % f->modulo != 0)) return 0;
+    return 1;
+}
 
 static
 int compute_const_points(
@@ -337,7 +362,8 @@ int compute_results(
     const secp256k1_context * ctx,
     const secp256k1_ge * base_ge,
     mpz_srcptr baseKey,
-    const on_result_cb callback
+    const on_result_cb callback,
+    const scalar_filter_t * filter
 ) {
     const U64 numResPerLaunch = resultsSize * numLoopsPerLaunch;
     const U64 pivotStride = numLaunches * numResPerLaunch;
@@ -497,7 +523,9 @@ shared(numThreads, numResPerLaunch, numLoopsPerLaunch, xOut, resultsSize, yParit
 
             for (U64 loopIdx = 0; loopIdx < numLoopsPerLaunch; loopIdx++) {
                 for (U32 i = 0; i < resultsSize; i++) {
-                    callback(keyOffset, x->n, *yParity);
+                    if (filter_match(filter, keyOffset)) {
+                        callback(keyOffset, x->n, *yParity);
+                    }
 
                     ++keyOffset;
                     ++x;
@@ -521,7 +549,8 @@ int batch_add_range(
     mpz_srcptr baseKey,
     const secp256k1_ge * base_ge,
     on_result_cb callback,
-    U32 progressMinInterval
+    U32 progressMinInterval,
+    const scalar_filter_t * filter
 ) {
     size_t szTotalMem = 0;
     size_t szMem;
@@ -606,7 +635,8 @@ int batch_add_range(
                 numLoopsPerLaunch, numLaunches, numThreads,
                 ge_pivot, ge_const, p_trees,
                 resultsSize, treeSize, progressMinInterval,
-                ctx, base_ge, baseKey, callback
+                ctx, base_ge, baseKey, callback,
+                filter
             );
 
             printf("\n");

@@ -212,7 +212,8 @@ int pointsBuilderGenerate(
     U32 numLoopsPerThread,
     U16 numThreads,
     U32 progressMinInterval,
-    const char * dbName
+    const char * dbName,
+    const scalar_filter_t * filter
 ) {
     secp256k1_context * ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
 
@@ -271,7 +272,8 @@ int pointsBuilderGenerate(
         ctx, numLaunches, numLoopsPerThread, numThreads,
         useBasePub ? NULL : mpBaseKey,
         useBasePub ? &base_ge: NULL,
-        result_cb, progressMinInterval
+        result_cb, progressMinInterval,
+        filter
     );
 
     double ompEndTime = omp_get_wtime();
