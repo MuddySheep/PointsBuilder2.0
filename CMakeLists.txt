@@ -49,11 +49,13 @@ add_library(PointsBuilder STATIC
     src/lib/db.c
     src/lib/ge_batch_addition.c
     src/lib/ge_utils.c
+    src/lib/numa_utils.c
     src/lib/points_builder.c
 )
 
 target_compile_definitions(PointsBuilder PRIVATE
     FE_LIMB_SIZE_CPU=${FE_LIMB_SIZE_CPU}
+    HAVE_NUMA
 )
 
 if (FE_LIMB_SIZE_CPU EQUAL 26)
@@ -68,6 +70,7 @@ target_link_libraries(PointsBuilder PRIVATE
     PkgConfig::GMP
     OpenMP::OpenMP_C
     SQLite::SQLite3
+    numa
 )
 
 target_compile_options(PointsBuilder PRIVATE
